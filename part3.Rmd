@@ -1,0 +1,576 @@
+---
+title: "Rによるデータ解析のためのデータ可視化"
+subtitle: "第3部: 地図を描画する"
+author: "瓜生真也（国立環境研究所）"
+date: "2021/9/5"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.height = 5, cache = FALSE)
+```
+
+第3部では、地理空間データを利用した地図作成を行います。教科書においては、アメリカ合衆国の行政単位である州や郡の可視化例が示されます。このチュートリアルでは、身近なデータとして日本の行政区域をもとに地図を作る方法を紹介します。
+
+行政区域の地図は、地図作成の作業において対象となることが多いです。この地図は都道府県や市町村などの行政区域、あるいはより小さな地域を対象に行われた観測データと紐付けた階級区分図（コロプレス図）に代表されます。
+
+階級区分図を作る作業において、地図と観測データの結合作業を伴うことがあります。また自在に両データを操作できるようになることで、例えば市町村単位で記録された値をより大きな都道府県単位に集計しての可視化もできます。本チュートリアルでは、こうした地図データの操作についても紹介します。さらに教科書の内容に従い、地理空間関係を考慮した地図表現方法についても学びます。
+
+<!--# 、地図表現に頼らない地図を使わない地理空間データの -->
+
+本チュートリアルで利用するデータ並びにコードを[GitHubにて公開しています](https://github.com/uribo/jfssa2021_datavis)。必要に応じて参照してください。
+
+まずは本チュートリアル全体で用いるRパッケージを読み込みます。このほかにいくつかのパッケージが登場しますが、それらは都度必要な時に読み込みます。
+
+```{r, warning=FALSE, message=FALSE}
+library(dplyr) # データ操作を容易に行うパッケージ
+library(ggplot2) # 可視化のためのパッケージ
+library(sf) # 地理空間データを扱うパッケージ
+library(rnaturalearth) # パブリックドメインで利用可能な行政地図データを提供するパッケージ
+```
+
+```{r, echo = FALSE}
+theme_set(theme_bw(base_family = "IPAexGothic"))
+theme_map <- function(base_size = 9, base_family = "") {
+    require(grid)
+    theme_bw(base_size=base_size, base_family=base_family) %+replace%
+        theme(axis.line=element_blank(),
+              axis.text=element_blank(),
+              axis.ticks=element_blank(),
+              axis.title=element_blank(),
+              panel.background=element_blank(),
+              panel.border=element_blank(),
+              panel.grid=element_blank(),
+              panel.spacing=unit(0, "lines"),
+              plot.background=element_blank(),
+              legend.justification = c(0,0),
+              legend.position = c(0,0)
+              )
+}
+```
+
+### 行政区域の地図
+
+### sfオブジェクトとgeom_sf()による地図描画
+
+地図描画のために最低限必要なのは、地図に示す対象のデータです。今回は行政上の境界線を示す行政区域が該当します。このデータは通常、shpファイルなどの形式によって提供されます。ですがここではまず、Rから直接利用可能なデータを使う例を見ていきます。これはパブリックドメインで利用可能な[Natural Earth](https://www.naturalearthdata.com/)のデータをRで呼び出す[`rnaturalearth`](https://cran.r-project.org/web/packages/rnaturalearth)パッケージを利用します。次のコードチャンクを実行すると日本の都道府県の形状を示すポリゴンデータが手に入ります。
+
+```{r}
+# Natural Earthから日本の都道府県ポリゴンを取得
+ne_jpn <- 
+  ne_states(country = "Japan", 
+                           returnclass = "sf") %>% 
+  # 使わない列を除外し、必要な列だけを選ぶようにします
+  select(iso_3166_2, gn_name) %>% 
+  tibble::new_tibble(nrow = nrow(.), class = "sf")
+```
+
+ポリゴンを取得する`ne_states()`では返り値のクラスを指定する引数`returnclass`があります。デフォルトでは"sp"ですが、ここでは"sf"を指定しました。
+
+```{r}
+class(ne_jpn)
+
+glimpse(ne_jpn)
+```
+
+オブジェクトのクラスを確認すると、sfクラスであることが確認できます。データの内容を見ると、日本の都道府県に関する列（`iso_3166_2`、`gn_name`）のほかに`geometry`列があります。この列は都道府県の形状を示すポリゴンの情報が格納されたsfc (simple-feature column)です（詳細は割愛します）。
+
+sfは近年のRでの地理空間データ、特にベクトル形式のデータを扱うために広く利用されるオブジェクトクラスです。同名の[`sf`](https://cran.r-project.org/package=sf)パッケージにより提供されます。
+
+ggplot2にもこのsfクラスのオブジェクトを描画する関数`geom_sf()` が用意されています。教科書では地図の描画に`geom_polygon()`を用いました。しかしsfオブジェクトに対しては`geom_sf()`を適用します。この関数を使った以下のコードチャンクがggplot2を用いた地図描画の基礎となります。
+
+```{r geom_sfによる最初の地図描画, fig.cap="geom_sf()の使用例"}
+ggplot(ne_jpn) +
+  geom_sf()
+```
+
+`geom_sf()`はggplot2の他の`geom_*()`と同様に操作します。これは散布図や棒グラフなどのgeomと同じように描画するデータを指定して`aes()`を介したマッピングが可能なことを意味します。この例を見るために続いて県ごとの塗り分け図を描画してみます。
+
+### 都道府県別の選挙結果の地図
+
+Natural Earthのデータには塗り分けに使える数値がないため、別途用意することになります。教科書ではアメリカ合衆国における大統領選挙のデータが使われます。しかしここでは2017年（平成29年）に行われた[第48回衆議院議員総選挙](https://ja.wikipedia.org/wiki/第48回衆議院議員総選挙)のデータを用います。このデータの作成手順については後述します。
+
+```{r 選挙データの用意, echo=FALSE}
+df_shugiin48_party_votes <-
+  readr::read_rds(here::here("data/shugiin48_prefecture_party_votes.rds"))
+
+df_shugiin48_party_votes_long <- 
+  df_shugiin48_party_votes %>% 
+  filter(区分 != "計") %>% 
+  select(prefecture = 区分, ends_with("計")) %>% 
+  select(!starts_with("合計")) %>% 
+  tidyr::pivot_longer(cols = ends_with("計"),
+                      names_to = "party",
+                      values_to = "votes") %>% 
+  mutate(party = stringr::str_remove(party, "_計"),
+         is_ruling = if_else(party %in% c("自由民主党", "公明党"),
+                             TRUE,
+                             FALSE))
+
+df_shugiin48_party_votes_tops <- 
+  df_shugiin48_party_votes_long %>% 
+  group_by(prefecture) %>% 
+  mutate(prop = votes / sum(votes, na.rm = TRUE) * 100) %>% 
+  top_n(n = 1, wt = prop) %>% 
+  ungroup()
+```
+
+```{r, echo=FALSE}
+# natural earthデータと結合
+ne_jpn_kanji <- 
+  ne_jpn %>% 
+  mutate(gn_name = recode(gn_name,
+                          `Miyagi Ken` = "Miyagi-ken")) %>% 
+  inner_join(zipangu::jpnprefs %>% 
+               select(prefecture_kanji, gn_name = prefecture),
+             by = "gn_name") %>% 
+  select(iso_3166_2, prefecture = prefecture_kanji, gn_name)
+
+ne_jpn_shugiin48 <- 
+  ne_jpn_kanji %>% 
+  left_join(df_shugiin48_party_votes_tops, by = "prefecture") %>% 
+  relocate(geometry, .after = last_col())
+```
+
+```{r}
+# natural earthの都道府県ポリゴンと選挙データの結合
+# 選挙データ: 第48回衆議院議員総選挙小選挙区での選挙結果
+# データを用意する手順は後述します
+
+# 格納されたデータを確認
+glimpse(ne_jpn_shugiin48)
+
+class(ne_jpn_shugiin48) # sfオブジェクト
+```
+
+選挙結果のデータには各都道府県でもっとも得票率の高かった党派(`party`列)の得票数(`votes`列)と得票率(`prop`列)が記録されています。オブジェクトのクラスはsfです。これは先述の通り、Rでの地理空間データを扱う形式の一つです。このクラスのオブジェクトは日本の白地図の例で見たように`geom_sf()` によるマッピングが可能です。
+
+ggplot2では`aes()`を使った要素の塗り分けにfillを指定することを思い出してください。これはsfオブジェクトをマッピングするための関数`geom_sf()` においても同様に機能します。データに付与された変数を用いて、塗り分けを行う例を次に示します。ここではあらかじめ党派の違いを示すカラーコードを定義して地図の塗り分けに適用します。
+
+<!--# また、党派が与党か野党かを示すフラグ列is_ruling(党派が与党である場合にTRUE)が付与されます。 -->
+
+```{r}
+# 党派を示すカラーコードを定義する
+party_colors <- c(`自由民主党` = "#41A12E",
+                  `公明党` = "#F35A82",
+                  `立憲民主党` = "#1B4787",
+                  `希望の党` = "#136437",
+                  `日本共産党` = "#D90A26",
+                  `日本維新の会` = "#3EC021",
+                  `社会民主党` = "#1CA9E9",
+                  `諸派` = "#D3D3D3",
+                  `無所属` = "#691D82")
+
+p <- 
+  ggplot(data = ne_jpn_shugiin48,
+          aes(fill = party))
+```
+
+```{r 都道府県ごとの第一党, fig.cap="都道府県ごとの第一党", echo=FALSE, fig.width=8, fig.height=5}
+p1 <- 
+  p +
+  geom_sf() +
+  scale_fill_manual(values = party_colors,
+                    guide = guide_legend(title = "党派"))
+
+p1
+```
+
+図を見ると全国で自由民主党が優勢だったことがわかりますが、山梨県のみ無所属の党派が第一党となったことも示されています。また、自由民主党、無所属以外の党派はいずれの県においても第一党となっていない点も明らかになりました。
+
+この結果を反映して、使用されない凡例を減らした図を作り直してみましょう。さらに追加の処理として県境を明確にするために線の太さを変更します。コードを見る前に、どのような変更を加えることになるか考えてみてください。
+
+```{r 都道府県ごとの第一党の修正版, fig.cap="都道府県ごとの第一党。修正版", fig.width=8, fig.height=4}
+p2 <- 
+  p +
+  # 県境を明確にするために太さを調節する
+  geom_sf(size = 0.2) +
+  # 使われない凡例を削除する
+  scale_fill_manual(values = party_colors[c(1, 9)],
+                    guide = guide_legend(title = "党派"))
+
+p2
+```
+
+`geom_sf()` を使ったggplot2による地図描画はこのようにsfオブジェクトを対象とし、データフレーム中の変数をマッピングに指定可能です。次は、この地図をより地図らしく仕上げていく方法を紹介します。
+
+## 地図を磨き上げる
+
+グラフの見た目やデータを整える作業は地図作成においても同様です。地理空間データでは、特に3次元の地球上の位置を2次元に投影するためにさまざまな表現（投影法）が用いられます。また、Natural Earthの日本ポリゴンと選挙データで示したように、興味のある地理空間データと説明のためのデータが揃っている場合は多くはありません。そのため、必要に応じてデータの結合を行う作業が伴います。加えて行政単位の地図では地図上の単位と集計単位が異なることもあります。こうした地図表現で求められる処理方法について、下記で解説します。
+
+### 投影法の変換
+
+地図の見た目は対象物の位置を示す座標の表現方法によって変わります。3次元である地球上の位置を表現するために主に地理座標系、投影座標系が使われます。先ほどの図では緯度と経度で表現する地理座標系が用いられています。この座標系の特徴は広域の表示に適していますが、一方で地球が完全な球ではなく楕円形であることに起因した面積や角度の歪みが生じます。これに対して投影座標系では2次元のXY座標で表現します。用いる投影法によって、面積・距離・角度のいずれかに対する歪みを補正できます。
+
+代表的な座標系として下記のものがあります。
+
+-   地理座標系... 緯線と経線で構成される。東西方向を経度、南北方向を緯度で表現する。多くの場合、北半球は正の緯度を持ち、南半球は負の緯度となる。経度の原点として本初子午線が使用される。
+
+-   投影座標系
+
+    -   モルワイデ図法 ... 正積図法（面積が正しく表現される）の一つ。世界地図の表現に使われる。
+
+    -   メルカトル図法... - 正角図法（角が正しく表現される）の一つ。子午線は平行、等間隔で与えられる。緯線も平行だが極に近づくにつれて間隔が広くなる。また極地域は表示されず、極地域に近づくほど面積に歪みが生じる。
+
+    -   ユニバーサル横メルカトル図法（UTM座標系）... 円筒図法の一種。地球を60のゾーンに分割し、領域内での歪みを少なくする。日本ではゾーン51から54が割り当てられ、国土地理院発行の縮尺1:10,000から1:200,000の地形図で使用される。
+
+    -   平面直角座標系... 日本国内を測量するために策定された平面直交座標系であり、公共測量の場において使われる。全国を[19の座標系](https://www.gsi.go.jp/sokuchikijun/jpc.html)に区分する
+
+特に日本周辺を表示する座標系としてメルカトル図法、UTM座標系、平面直角座標系が使われます。
+
+ggplot2を介した地図描画では2つの方法によって地図データの座標系を変換して表現可能です。一つは`coord_sf()`を用いて任意の座標系を指定する方法、もう一つは対象のオブジェクトの座標参照系 (Coordinate Reference System: CRS) を事前に変更しておく方法です。
+
+広範囲を表示する地図では座標系の違いが明確になります。それぞれの例を見るために、改めてNatural Earthから全球のポリゴンデータをダウンロードします。
+
+```{r}
+# Natural Earthから全球のポリゴンデータをダウンロード
+ne_world <-
+  ne_countries(scale = 10,
+               returnclass = "sf")
+```
+
+```{r}
+x <- 
+  st_crs(ne_world)
+x$input
+```
+
+sfオブジェクトは座標参照系に関する情報を所有しています。これはsfオブジェクトをコンソールに出力した際にも表示されますが、`st_crs()`を使った確認もできます。`x$input`で表示される値が座標参照系の要素となります。これを見ると`ne_asia`の座標系は地理座標系であることがわかります（`+proj=longlat`）。
+
+地理座標系のsfオブジェクトを`geom_sf()`で出力すると、デフォルトで緯度と経度をX軸とY軸の平面上に投影した結果となります。
+
+```{r 世界地図の描画, fig.cap="世界地図の描画"}
+p <- 
+  ggplot(data = ne_world) +
+  geom_sf()
+
+p
+```
+
+それではこの図の投影法を変更してみます。まずはあらかじめデータをマッピングした後での`coord_sf()`を利用した変更方法です。引数`crs`に任意の座標参照系を指定して実行します。次のチャンクコードではモルワイデ図法による投影法で地図を描画させます。
+
+```{r モルワイデ図法による世界地図の描画, fig.cap="モルワイデ図法による世界地図の描画"}
+# モルワイデ図法による世界地図の描画
+p +
+  coord_sf(crs = "+proj=moll")
+```
+
+もう一つ、座標参照系を事前に変更する方法では、sfパッケージの`st_transform()`を使います。この関数は座標系を変更したいオブジェクトを対象に、新たに指定する座標系を入力して実行します。次のチャンクコードでこの処理を実行し、`geom_sf()`によるマッピングを行います。
+
+```{r, eval = FALSE, echo = TRUE}
+# st_transform()による座標参照系の変更
+ne_world_moll <- 
+  st_transform(ne_world, crs = "+proj=moll")
+
+# 結果は省略
+ggplot(data = ne_world_moll) +
+  geom_sf()
+```
+
+### 地理空間データの結合と集約
+
+#### 地理空間データと属性データを紐づける
+
+ここでは再び衆議院議員総選挙のデータを扱います。先述の通り、このデータはNatural Earthが提供する日本の都道府県ポリゴンと選挙結果が結合されたものとなっています。これによって都道府県の地図の上に選挙結果をマッピング可能になりました。では、このデータがどのようにして作成されたものなのか、現実の結合作業で生じる問題にも触れながら解説します。
+
+選挙データは[GitHubリポジトリ](https://github.com/uribo/jfssa2021_datavis)のdataフォルダに保存されています。このリポジトリをgitクローンし、次のチャンクコードを実行するとデータが読み込まれます。
+
+```{r, eval = FALSE, echo = TRUE}
+df_shugiin48_party_votes <-
+  readr::read_rds(here::here("data/shugiin48_prefecture_party_votes.rds"))
+```
+
+```{r}
+glimpse(df_shugiin48_party_votes)
+```
+
+`df_shugiin48_party_votes`は第48回衆議院議員総選挙小選挙区における都道府県・届出政党等別の得票数のデータセットです。候補者の性別ごとに与党、野党ならびに無所属での得票数が記録されています。こうした属性データを地図データと結合し、地図描画を行うためのデータセットを構築する方法を下記で説明していきます。なおこのデータセットの作り方はGitHubリポジトリ中のコード（`data-raw/shugiin48.R`）を参照してください。
+
+```{r}
+# 選挙データの加工1/2
+df_shugiin48_party_votes_mod <-
+  df_shugiin48_party_votes %>% 
+  filter(区分 != "計") %>% 
+  select(prefecture = 区分, ends_with("計")) %>% 
+  select(!starts_with("合計"))
+```
+
+上記のチャンクコードの説明をします。まず`filter()`で全体の集計結果の行を除外します。続いて`select()`によって列選択を行います。その際、一部の列名を変更しています。
+
+ここで示したデータ操作の関数`filter()`や`select()`は第2部で登場した[dplyr](https://cran.r-project.org/package=dplyr)パッケージによるものです。[dplyr](https://cran.r-project.org/package=dplyr)パッケージには、このあと扱う`mutate()`やデータ結合の関数も登場しますが、他にもデータ操作のための関数が豊富に提供されています。
+
+作成したオブジェクトを確認すると、集計対象の都道府県(`prefecture`)と各党の得票数の合計列(`党名_計`の形式)が残っていることがわかります。このようにデータ加工の作業でも、グラフ作成の時同様に中間オブジェクトを作って処理結果を確認しておくと良いでしょう。
+
+```{r}
+head(df_shugiin48_party_votes_mod)
+```
+
+続いて、このデータを党別に集計等ができるよう、縦長の形式、すなわち党名の列と得票数の列に整形してみましょう。これには[tidyr](https://cran.r-project.org/package=tidyr)パッケージの関数`pivot_longer()`を使います。
+
+```{r}
+df_shugiin48_party_votes_long <- 
+  df_shugiin48_party_votes_mod %>% 
+  tidyr::pivot_longer(cols = ends_with("計"),
+                      names_to = "party",
+                      values_to = "votes") %>% 
+  mutate(party = stringr::str_remove(party, "_計"),
+         is_ruling = if_else(party %in% c("自由民主党", "公明党"),
+                             TRUE,
+                             FALSE))
+```
+
+`pivot_longer()`の処理では引数`cols`に整形対象の列（ここでは党名の列が`党名_計`の形式であることを利用して`ends_with()`で複数列を対象にする）を選択し、列名が格納される列を`names_to`、各列に含まれる対応する値を格納する列を`values_to`引数にそれぞれ指定します。最後に、`mutate()`で列の値に変更を加えます。ここでは2つの処理が行われ、一つは新たに党名が格納された`party`列から元の列名に含まれる「`_計`」という文字列を削除し、党名のみが記録されるようにします。もう一つは党名が「自由民主党」および「公明党」、党名が与党である時に*TRUE*が記録される`is_ruling`列を新たに作る処理です。ここでも処理結果を中間オブジェクトとして残しておきます。
+
+```{r}
+head(df_shugiin48_party_votes_long)
+```
+
+ここまでできたら、地図データと結合させるために最後の一手を加えます。それは以下のチャンクコードで示すように、都道府県ごとに党派ごとの得票率を求め、各都道府県でもっとも得票率が高い党派を抽出する処理です。
+
+```{r}
+df_shugiin48_party_votes_tops <- 
+  df_shugiin48_party_votes_long %>% 
+  group_by(prefecture) %>% 
+  mutate(prop = votes / sum(votes, na.rm = TRUE) * 100) %>% 
+  top_n(n = 1, wt = prop) %>% 
+  ungroup()
+
+head(df_shugiin48_party_votes_tops)
+```
+
+地図データと紐付けるデータが用意できたら、いよいよ結合処理を行います。ここで改めて日本の都道府県ポリゴンの確認をします。このデータでは都道府県の名前がローマ字表記で記録されています。一方の選挙データは漢字です。そのため、この状態では結合処理が失敗します。
+
+```{r}
+# 2つのデータセットでの都道府県名の表記
+ne_jpn$gn_name
+
+df_shugiin48_party_votes_tops$prefecture
+```
+
+データフレーム間の結合処理では共通の値が記録された列が必要になります。そこで今度は都道府県ポリゴンデータに処理を加えます。ベクトルでローマ字表記に対応する都道府県の漢字を与えても良いですが、ここでは新たなデータセットを利用して結合に用いる列を用意する方法を示します。
+
+[zipangu](https://cran.r-project.org/package=zipangu)パッケージのデータセットには都道府県の漢字、ローマ字両方の表記が記録されます。この情報を都道府県のポリゴンデータと紐づけてみましょう。結合のための関数は`inner_join()`を使います。この関数は結合対象の2つのデータセット間で共通の値をもつ行だけを結合、返却します。
+
+```{r}
+# zipanguパッケージからデータセットを利用する
+jpnprefs <- 
+  zipangu::jpnprefs %>% 
+  select(prefecture_kanji, gn_name = prefecture)
+glimpse(jpnprefs)
+
+ne_jpn %>% 
+  inner_join(jpnprefs,
+             by = "gn_name")
+```
+
+どうしたことでしょう。結果のデータフレームには46行しかありません。元の都道府県データには47県分あったことから、1県の結合が失敗したことが推測されます。これをコードで確認してみましょう。これは先ほどとは別の結合関数`anti_join()`を使って調べられます。この関数は他の結合関数とは異なり、データセット間で一致しない行を返却します。つまりここで出力される都道府県名に問題があることを示します。
+
+```{r}
+ne_jpn %>% 
+    anti_join(jpnprefs,
+               by = "gn_name")
+
+ne_jpn$gn_name[25]
+ne_jpn$gn_name[1]
+ne_jpn$gn_name[47]
+```
+
+結合に失敗した原因はなんでしょう。また、結合を正しく行うにはどうすれば良いでしょうか。文字列の一致を見る結合処理では、こうした結合処理の不備は現実の作業でも頻繁に生じます。原因の多くは今回のような表記揺れ、誤字脱字です。
+
+結合に失敗した「Miyagi Ken」が他の県と2点異なります。まず県名と県名の末尾をつなぐハイフン（`-`）がないこと、そして他の県が先頭文字以外は小文字であるのに対して、大文字が2箇所出現している点です。
+
+上記の問題に対して、mutate()で値の書き換えを行います。次のチャンクコードの結果では正しく47県の情報が失われることなく結合処理が完了します。
+
+```{r}
+ne_jpn_kanji <- 
+  ne_jpn %>% 
+  mutate(gn_name = recode(gn_name,
+                          # ローマ字表記の規則を他県と合わせる
+                          `Miyagi Ken` = "Miyagi-ken")) %>% 
+  inner_join(jpnprefs,
+             by = "gn_name") %>% 
+  select(iso_3166_2, prefecture = prefecture_kanji, gn_name)
+
+# 行数を確認
+nrow(ne_jpn_kanji)
+```
+
+いろいろな苦労がありましたが、ようやく地図データと選挙データの紐付けが行える状態となりました。このデータを使って都道府県別の選挙結果の地図が描画できるようになります。
+
+```{r}
+ne_jpn_shugiin48 <- 
+  ne_jpn_kanji %>% 
+  left_join(df_shugiin48_party_votes_tops, by = "prefecture") %>% 
+  relocate(geometry, .after = last_col())
+```
+
+#### 地理空間データの集約
+
+選挙データ並びに日本地図ポリゴンはいずれも都道府県単位ですが、例えば関東、東北といった地方別に集約する機会を想定します。こうした地理空間データの規模の変更、データの集約方法を説明していきます。
+
+ここでは先ほど中間オブジェクトとして作成したdf_shugiin48_party_votes_longを起点にしてデータを作っていきます。まずは都道府県ごとに集計されたこのデータから、党派ごとに地方単位での集計データを作ります。
+
+```{r}
+df_shugiin48_party_votes_region <- 
+  df_shugiin48_party_votes_long %>% 
+  left_join(zipangu::jpnprefs %>% 
+             select(prefecture = prefecture_kanji, region),
+    by = "prefecture") %>% 
+  group_by(region, party) %>% 
+  summarise(votes = sum(votes),
+            .groups = "drop") %>% 
+  filter(!is.na(votes))
+
+head(df_shugiin48_party_votes_region)
+```
+
+ここでも都道府県とつながる地方名の情報を`zipangu::jpnprefs`から得ることにました。漢字表記の都道府県名をキーとして2つのデータを結合。その後の処理が集約のための手続きとなります。具体的には`group_by()`と`summarise()`の2つの関数を組み合わせて処理します。`group_by()`は、後に続く処理（ここでは`summarise()`）の適用対象となるグループを指定します。コードでは`region`、`party`を与えて、次の集約関数`summarise()`に地方、党派ごとに処理する命令を宣言しています。処理内容は得票数（`votes`）を合算する、です。これにより党派ごとに地方単位での集計データが出来上がります。
+
+地方別の集約データは地図データの方でも用意する必要があります。幸いなことにsfとdplyrの相性は良く、前述の`group_by()`や`summarise()`はsfオブジェクトにおいても同等に機能します。ただしsfオブジェクトの場合、`summarise()`での集約処理とは別に地理空間データの集約化も行われる点で異なります。
+
+次のチャンクコードを実行すると、都道府県のポリゴンを集約した地方別のポリゴンデータが生成されます。
+
+```{r}
+ne_jpn_region <- 
+  ne_jpn_kanji %>% 
+  left_join(zipangu::jpnprefs %>% 
+              select(prefecture = prefecture_kanji, region),
+            by = "prefecture") %>%
+  group_by(region) %>% 
+  summarise(.groups = "drop")
+
+# geometryに格納されるのは地方のポリゴンデータとなります
+glimpse(ne_jpn_region)
+```
+
+地図データと属性データの結合方法は先ほどと同じです。結合する2つのデータセットに共通の列`region`があるため、特別な処理は不要です。
+
+```{r}
+ne_jpn_shugiin48_region <-
+  ne_jpn_region %>% 
+  left_join(df_shugiin48_party_votes_region, 
+            by = "region")
+```
+
+結果を確認してみます。以下のチャンクコードは党派の中から自由民主党のデータを抽出し、地方単位での階級区分図を作成します。
+
+```{r 自由民主党の地方単位の得票数, fig.cap="自由民主党の地方単位の得票数"}
+ne_jpn_shugiin48_region %>% 
+  filter(party == "自由民主党") %>% 
+  mutate(votes = case_when(
+    between(votes, 0, 1000000) ~ "0-100万",
+    between(votes, 1000001, 2000000) ~ "100万-200万",
+    between(votes, 2000001, 3000000) ~ "200万-300万",
+    between(votes, 3000001, 4000000) ~ "300万-400万",
+    between(votes, 4000001, 5000000) ~ "400万-500万",
+    between(votes, 5000001, 6000000) ~ "500万-600万",
+    between(votes, 6000001, 7000000) ~ "600万-700万",
+    between(votes, 7000001, 8000000) ~ "700万-800万",
+    between(votes, 8000001, 9000000) ~ "800万-900万",
+    between(votes, 9000001, Inf) ~ "900万以上",
+  )) %>% 
+  ggplot() +
+  geom_sf(aes(fill = votes), color = "transparent") +
+  scale_fill_brewer(palette = "Greens",
+                    guide = guide_legend(title = "得票数",
+                                         reverse = TRUE)) +
+  labs(title = "自由民主党の地方単位の得票数",
+       subtitle = "第48回衆議院議員総選挙小選挙区") +
+  theme(legend.position = "bottom")
+```
+
+## 空間配置を考慮したグラフ
+
+教科書では典型的な地図表現とは別に地理的な空間配置を考慮したグラフが紹介されます。アメリカ合衆国の州を一定の大きさのグリッドまたはポイント形式で表現する[statebins](https://cran.r-project.org/package=statebins)パッケージは州の面積、位置関係の正しさを許容し、各州を均等な表示となるようにします。これにより、面積の小さな州のデータを見落とす心配がなくなる利点があります。次の図は、アメリカ合衆国で行われた大統領選挙のデータを用いたものです。どちらの図もドナルド・トランプへの得票率を州ごとに塗り分けた図となっています。
+
+```{r アメリカ合衆国大統領選挙の結果, fig.cap="アメリカ合衆国大統領選挙の結果", echo=FALSE, message=FALSE, warning=FALSE, fig.width=10}
+library(patchwork)
+library(socviz)
+library(statebins)
+us_states <- map_data("state")
+election$region <- tolower(election$state)
+us_states_elec <- left_join(us_states, election)
+# 図7.8
+p0 <- ggplot(data = us_states_elec,
+             mapping = aes(x = long, y = lat, 
+                           group = group, fill = pct_trump))
+p1 <- p0 + geom_polygon(color = "gray90", size = 0.1) +
+  coord_map(projection = "albers", lat0 = 39, lat1 = 45)
+p1 <- 
+  p1 + labs(title = "Trump vote") + theme_map() + labs(fill = "Percent") + scale_fill_gradient(low = "white", high = "#CB454A") + labs(title = "Trump vote")
+
+p2 <- 
+  statebins(
+  election,
+  state_col = "state",
+  value_col = "pct_trump",
+  dark_label = "white",
+  name = "Percent Trump",
+  palette = "Reds",
+  direction = 1,
+  font_size = 3) +
+  theme_statebins(legend_position = "top")
+
+p1 + p2 +
+  plot_layout(ncol = 2)
+```
+
+### tabularmaps
+
+アメリカ合衆国の地図ではstatebinsが使えますが、日本で同様の表現を行うには[tabularmaps](https://cran.r-project.org/package=tabularmaps)パッケージが役立ちます。tabularmapsは「カラム地図」と呼ばれる行政区域を表状に配置する表現を可能にするパッケージです。この表現を用いれば、日本の都道府県や東京23区をはじめ、任意の行政区域の空間的な配置を考慮した可視化ができます。
+
+カラム地図の利用例として、[新型コロナウイルス対策ダッシュボード](https://www.stopcovid19.jp)があります。都道府県の面積によらず、各県の様子を一望でき、単純な地図表現よりも比較に優れます。
+
+![カラム地図の利用例 - 新型コロナウイルス対策ダッシュボード <https://www.stopcovid19.jp>](images/paste-9C35D692.png)
+
+tabularmapsはggplot2をベースとしたパッケージですがstatebinsと同じく`geom_*()`ではない、専用の描画関数を提供します。`tabularmap()`に表示するデータ、配置する位置を指定する列を指定して可視化が行われます。
+
+```{r tabularmapsによる都道府県地図の表現, eval = FALSE, fig.cap = "tabularmapsによる都道府県地図の表現", fig.width = 6}
+library(tabularmaps)
+
+jpn77 %>% 
+  select(jis_code,
+         prefecture = prefecture_kanji,
+         x,
+         y) %>% 
+  left_join(df_shugiin48_party_votes_tops,
+            by = "prefecture") %>% 
+  tabularmap(x = x,
+             y = y,
+             group = jis_code,
+             label = prefecture,
+             fill = prop,
+             size = 2,
+             family = "IPAexGothic") +
+  scale_fill_viridis_b() +
+  theme_tabularmap(base_family = "IPAexGothic")
+```
+
+<!--# 時系列、要素別の地図をまとめる -->
+
+<!--# 地図に依存しない表現 教科書の7.1節では地図描画の前に、これまで取り組んできたようなグラフの作成を行っています。 -->
+
+```{r, eval = FALSE, fig.height = 8}
+df_shugiin48_party_votes_tops %>% 
+  ggplot(aes(prop,
+             reorder(prefecture, prop),
+             color = party)) +
+  geom_point() +
+  scale_color_manual(values = party_colors[c(1, 9)]) +
+  # guides(color = "none") +
+  labs(x = "都道府県での第一党の得票率(%)",
+       y = NULL) +
+  theme(axis.text = element_text(size = 8))
+```
+
+## 参考資料
+
+-   Robin Lovelace, Jakub Nowosad, Jannes Muenchow (2019). Geocomputation with R. CRC Press.
+
+-   松村 優哉,湯谷 啓明,紀ノ定 保礼,前田 和寛 (2021). 改訂2版 RユーザのためのRStudio実践入門のおすすめポイント. 技術評論社.
+
+## 発表時の動作環境
+
+```{r, echo=FALSE}
+pander::pander(sessionInfo(), compact = FALSE)
+```
