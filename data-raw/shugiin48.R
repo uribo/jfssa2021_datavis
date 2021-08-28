@@ -20,17 +20,17 @@ read_pref_party_votes <- function(data, party) {
 
 df_shugiin48_party_votes <-
   left_join(
-    readxl::read_xls(here::here("data/shugiin48/000516724.xls"), 
+    readxl::read_xls(here::here("data/000516724.xls"), 
                      skip = 4, 
                      n_max = 50) %>% 
       read_pref_party_votes(c("自由民主党", "立憲民主党", "希望の党", "公明党")),
-    readxl::read_xls(here::here("data/shugiin48/000516724.xls"), 
+    readxl::read_xls(here::here("data/000516724.xls"), 
                      skip = 56) %>% 
       select(1:10) %>% 
       read_pref_party_votes(c("日本共産党", "日本維新の会", "社会民主党")),
     by = "区分") %>% 
   left_join(
-    readxl::read_xls(here::here("data/shugiin48/000516724.xls"), 
+    readxl::read_xls(here::here("data/000516724.xls"), 
                      skip = 4, 
                      n_max = 50, 
                      sheet = 2) %>% 
