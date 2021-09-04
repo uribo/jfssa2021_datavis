@@ -29,24 +29,14 @@ library(sf) # 地理空間データを扱うパッケージ
 library(rnaturalearth) # パブリックドメインで利用可能な行政地図データを提供するパッケージ
 ```
 
+```{r, eval = FALSE, echo = FALSE}
+# 資料では動かさない。インタラクティブに説明する際に読み込む
+library(tidylog)
+```
+
+
 ```{r, echo = FALSE}
 theme_set(theme_bw(base_family = "IPAexGothic"))
-theme_map <- function(base_size = 9, base_family = "") {
-    require(grid)
-    theme_bw(base_size=base_size, base_family=base_family) %+replace%
-        theme(axis.line=element_blank(),
-              axis.text=element_blank(),
-              axis.ticks=element_blank(),
-              axis.title=element_blank(),
-              panel.background=element_blank(),
-              panel.border=element_blank(),
-              panel.grid=element_blank(),
-              panel.spacing=unit(0, "lines"),
-              plot.background=element_blank(),
-              legend.justification = c(0,0),
-              legend.position = c(0,0)
-              )
-}
 ```
 
 ### 行政区域の地図
@@ -287,7 +277,7 @@ glimpse(df_shugiin48_party_votes)
 `df_shugiin48_party_votes`は第48回衆議院議員総選挙小選挙区における都道府県・届出政党等別の得票数のデータセットです。候補者の性別ごとに与党、野党ならびに無所属での得票数が記録されています。こうした属性データを地図データと結合し、地図描画を行うためのデータセットを構築する方法を下記で説明していきます。なおこのデータセットの作り方はGitHubリポジトリ中のコード（`data-raw/shugiin48.R`）を参照してください。
 
 ```{r}
-# 選挙データの加工1/2
+# 選挙データの加工1/5
 df_shugiin48_party_votes_mod <-
   df_shugiin48_party_votes %>% 
   filter(区分 != "計") %>% 
@@ -308,6 +298,7 @@ head(df_shugiin48_party_votes_mod)
 続いて、このデータを党別に集計等ができるよう、縦長の形式、すなわち党名の列と得票数の列に整形してみましょう。これには[tidyr](https://cran.r-project.org/package=tidyr)パッケージの関数`pivot_longer()`を使います。
 
 ```{r}
+# 選挙データの加工2/5
 df_shugiin48_party_votes_long <- 
   df_shugiin48_party_votes_mod %>% 
   tidyr::pivot_longer(cols = ends_with("計"),
@@ -328,6 +319,7 @@ head(df_shugiin48_party_votes_long)
 ここまでできたら、地図データと結合させるために最後の一手を加えます。それは以下のチャンクコードで示すように、都道府県ごとに党派ごとの得票率を求め、各都道府県でもっとも得票率が高い党派を抽出する処理です。
 
 ```{r}
+# 選挙データの加工3/5
 df_shugiin48_party_votes_tops <- 
   df_shugiin48_party_votes_long %>% 
   group_by(prefecture) %>% 
@@ -382,6 +374,7 @@ ne_jpn$gn_name[47]
 上記の問題に対して、mutate()で値の書き換えを行います。次のチャンクコードの結果では正しく47県の情報が失われることなく結合処理が完了します。
 
 ```{r}
+# 選挙データの加工4/5
 ne_jpn_kanji <- 
   ne_jpn %>% 
   mutate(gn_name = recode(gn_name,
@@ -398,6 +391,7 @@ nrow(ne_jpn_kanji)
 いろいろな苦労がありましたが、ようやく地図データと選挙データの紐付けが行える状態となりました。このデータを使って都道府県別の選挙結果の地図が描画できるようになります。
 
 ```{r}
+# 選挙データの加工5/5
 ne_jpn_shugiin48 <- 
   ne_jpn_kanji %>% 
   left_join(df_shugiin48_party_votes_tops, by = "prefecture") %>% 
@@ -483,6 +477,26 @@ ne_jpn_shugiin48_region %>%
 
 教科書では典型的な地図表現とは別に地理的な空間配置を考慮したグラフが紹介されます。アメリカ合衆国の州を一定の大きさのグリッドまたはポイント形式で表現する[statebins](https://cran.r-project.org/package=statebins)パッケージは州の面積、位置関係の正しさを許容し、各州を均等な表示となるようにします。これにより、面積の小さな州のデータを見落とす心配がなくなる利点があります。次の図は、アメリカ合衆国で行われた大統領選挙のデータを用いたものです。どちらの図もドナルド・トランプへの得票率を州ごとに塗り分けた図となっています。
 
+```{r, echo=FALSE}
+theme_map <- function(base_size = 9, base_family = "") {
+    require(grid)
+    theme_bw(base_size = base_size, 
+             base_family = base_family) %+replace%
+        theme(axis.line = element_blank(),
+              axis.text = element_blank(),
+              axis.ticks = element_blank(),
+              axis.title = element_blank(),
+              panel.background = element_blank(),
+              panel.border = element_blank(),
+              panel.grid = element_blank(),
+              panel.spacing = unit(0, "lines"),
+              plot.background = element_blank(),
+              legend.justification = c(0, 0),
+              legend.position = c(0, 0))
+}
+```
+
+
 ```{r アメリカ合衆国大統領選挙の結果, fig.cap="アメリカ合衆国大統領選挙の結果", echo=FALSE, message=FALSE, warning=FALSE, fig.width=10}
 library(patchwork)
 library(socviz)
@@ -544,23 +558,6 @@ jpn77 %>%
              family = "IPAexGothic") +
   scale_fill_viridis_b() +
   theme_tabularmap(base_family = "IPAexGothic")
-```
-
-<!--# 時系列、要素別の地図をまとめる -->
-
-<!--# 地図に依存しない表現 教科書の7.1節では地図描画の前に、これまで取り組んできたようなグラフの作成を行っています。 -->
-
-```{r, eval = FALSE, fig.height = 8}
-df_shugiin48_party_votes_tops %>% 
-  ggplot(aes(prop,
-             reorder(prefecture, prop),
-             color = party)) +
-  geom_point() +
-  scale_color_manual(values = party_colors[c(1, 9)]) +
-  # guides(color = "none") +
-  labs(x = "都道府県での第一党の得票率(%)",
-       y = NULL) +
-  theme(axis.text = element_text(size = 8))
 ```
 
 ## 参考資料
