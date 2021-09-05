@@ -4,6 +4,9 @@ Rによるデータ解析のためのデータ可視化
 2021年度 統計関連学会連合大会 チュートリアル
 「Rによるデータ解析のためのデータ可視化」、第三部「地図を描画する」の資料置き場です。
 
+- [スライド](https://rawcdn.githack.com/uribo/jfssa2021_datavis/main/slide/210905_jfssa_dataviz_tutorial.pdf)
+- [コード](https://github.com/uribo/jfssa2021_datavis/blob/main/part3.Rmd)
+
 
 ## セットアップ
 
